@@ -319,7 +319,7 @@ impl<'a, F> TextBox<'a, F> {
     }
 
     /// sets whether this TextBox should steal focus and capture the keyboard
-    pub fn focus(mut self, capture_keyboard: bool) -> Self {
+    pub fn steal_focus(mut self, capture_keyboard: bool) -> Self {
         self.capture_keyboard = capture_keyboard;
         self
     }
