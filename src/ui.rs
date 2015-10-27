@@ -666,7 +666,7 @@ pub fn get_mouse_state<C>(ui: &Ui<C>, idx: widget::Index) -> Option<Mouse> {
             Some(Capturing::Captured(captured_idx)) =>
                 if idx == captured_idx { Some(ui.mouse) } else { None },
             _ =>
-                if Some(idx) == ui.maybe_widget_under_mouse 
+                if Some(idx) == ui.maybe_widget_under_mouse
                 || Some(idx) == ui.maybe_top_scrollable_widget_under_mouse {
                     Some(ui.mouse)
                 } else {
@@ -680,7 +680,7 @@ pub fn get_mouse_state<C>(ui: &Ui<C>, idx: widget::Index) -> Option<Mouse> {
 /// Indicate that the widget with the given widget::Index has captured the mouse.
 ///
 /// Returns true if the mouse was successfully captured.
-/// 
+///
 /// Returns false if the mouse was already captured.
 pub fn mouse_captured_by<C>(ui: &mut Ui<C>, idx: widget::Index) -> bool {
     // If the mouse isn't already captured, set idx as the capturing widget.
@@ -704,6 +704,11 @@ pub fn mouse_uncaptured_by<C>(ui: &mut Ui<C>, idx: widget::Index) -> bool {
         return true;
     }
     false
+}
+
+pub fn change_focus_to<C>(ui: &mut Ui<C>, idx: widget::Index) {
+    ui.maybe_captured_mouse = None;
+    ui.maybe_captured_keyboard = Some(Capturing::Captured(idx));
 }
 
 /// Indicate that the widget with the given widget::Index has captured the keyboard.
@@ -792,5 +797,3 @@ pub fn post_update_cache<C, W>(ui: &mut Ui<C>, widget: widget::PostUpdateCache<W
 pub fn clear_with<C>(ui: &mut Ui<C>, color: Color) {
     ui.maybe_background_color = Some(color);
 }
-
-

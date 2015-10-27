@@ -10,7 +10,7 @@ use num::Float;
 use input::keyboard::Key::{Backspace, Left, Right, Return, A, E, LCtrl, RCtrl};
 use position::{self, Dimensions, Point};
 use theme::Theme;
-use ui::GlyphCache;
+use ui::{self, GlyphCache};
 use vecmath::vec2_sub;
 use widget::{self, Widget};
 
@@ -28,6 +28,7 @@ pub struct TextBox<'a, F> {
     maybe_react: Option<F>,
     style: Style,
     enabled: bool,
+    capture_keyboard: bool
 }
 
 /// Styling for the TextBox, necessary for constructing its renderable Element.
@@ -294,6 +295,7 @@ impl<'a, F> TextBox<'a, F> {
             maybe_react: None,
             style: Style::new(),
             enabled: true,
+            capture_keyboard: false
         }
     }
 
@@ -313,6 +315,12 @@ impl<'a, F> TextBox<'a, F> {
     /// If true, will allow user inputs.  If false, will disallow user inputs.
     pub fn enabled(mut self, flag: bool) -> Self {
         self.enabled = flag;
+        self
+    }
+
+    /// sets whether this TextBox should steal focus and capture the keyboard
+    pub fn focus(mut self, capture_keyboard: bool) -> Self {
+        self.capture_keyboard = capture_keyboard;
         self
     }
 
@@ -360,14 +368,24 @@ impl<'a, F> Widget for TextBox<'a, F> where F: FnMut(&mut String) {
         let text_x = position::align_left_of(pad_dim[0], text_w) + TEXT_PADDING;
         let text_start_x = text_x - text_w / 2.0;
         let mut new_control_pressed = state.view().control_pressed;
-        let mut new_interaction = match (self.enabled, maybe_mouse) {
-            (false, _) | (true, None) => Interaction::Uncaptured(Uncaptured::Normal),
-            (true, Some(mouse)) => {
-                let over_elem = over_elem(ui.glyph_cache(), mouse.xy, dim, pad_dim, text_start_x,
-                                          text_w, font_size, &self.text);
-                get_new_interaction(over_elem, state.view().interaction, mouse)
-            },
+        let mut new_interaction = if self.capture_keyboard {
+            ui::change_focus_to(ui.ui, args.idx);
+            Interaction::Captured(View{
+
+                cursor: Cursor::from_range(0, self.text.chars().count()),
+                offset: 0.0
+            })
+        } else {
+            match (self.enabled, maybe_mouse) {
+                (false, _) | (true, None) => Interaction::Uncaptured(Uncaptured::Normal),
+                (true, Some(mouse)) => {
+                    let over_elem = over_elem(ui.glyph_cache(), mouse.xy, dim, pad_dim, text_start_x,
+                    text_w, font_size, &self.text);
+                    get_new_interaction(over_elem, state.view().interaction, mouse)
+                },
+            }
         };
+
 
         // Check cursor validity (and update new_interaction if necessary).
         if let Interaction::Captured(view) = new_interaction {
@@ -400,93 +418,98 @@ impl<'a, F> Widget for TextBox<'a, F> where F: FnMut(&mut String) {
             new_interaction = Interaction::Captured(View { cursor: cursor, offset: v_offset });
         }
 
-        // If TextBox is captured, check for recent input and update the text accordingly.
-        if let Interaction::Captured(captured) = new_interaction {
-            let mut cursor = captured.cursor;
-            let input = ui.input();
+        // If this TextBox has just stolen focus, then we should not process the current input because it was probably a
+        // return keystroke that was already processed
+        if !self.capture_keyboard {
+            // If TextBox is captured, check for recent input and update the text accordingly.
+            if let Interaction::Captured(captured) = new_interaction {
+                let mut cursor = captured.cursor;
+                let input = ui.input();
 
-            // Check for entered text.
-            for text in input.entered_text {
-                if new_control_pressed { break; }
-                if text.chars().count() == 0 { continue; }
+                // Check for entered text.
+                for text in input.entered_text {
+                    if new_control_pressed { break; }
+                    if text.chars().count() == 0 { continue; }
 
-                let max_w = pad_dim[0] - TEXT_PADDING * 2.0;
-                if text_w + ui.glyph_cache().width(font_size, &text) > max_w { continue; }
+                    let max_w = pad_dim[0] - TEXT_PADDING * 2.0;
+                    if text_w + ui.glyph_cache().width(font_size, &text) > max_w { continue; }
 
-                let end: String = self.text.chars().skip(cursor.end).collect();
-                let start: String = self.text.chars().take(cursor.start).collect();
-                self.text.clear();
-                self.text.push_str(&start);
-                self.text.push_str(&text);
-                self.text.push_str(&end);
-                cursor.shift(text.chars().count() as i32);
-            }
+                    let end: String = self.text.chars().skip(cursor.end).collect();
+                    let start: String = self.text.chars().take(cursor.start).collect();
+                    self.text.clear();
+                    self.text.push_str(&start);
+                    self.text.push_str(&text);
+                    self.text.push_str(&end);
+                    cursor.shift(text.chars().count() as i32);
+                }
 
-            // Check for control keys.
-            for key in input.pressed_keys.iter() {
-                match *key {
-                    Backspace => if cursor.is_cursor() {
-                        if cursor.start > 0 {
-                            let start: String = self.text.chars().take(cursor.start-1).collect();
+                // Check for control keys.
+                for key in input.pressed_keys.iter() {
+                    match *key {
+                        Backspace => if cursor.is_cursor() {
+                            if cursor.start > 0 {
+                                let start: String = self.text.chars().take(cursor.start-1).collect();
+                                let end: String = self.text.chars().skip(cursor.end).collect();
+                                self.text.clear();
+                                self.text.push_str(&start);
+                                self.text.push_str(&end);
+                                cursor.shift(-1);
+                            }
+                        } else {
+                            let start: String = self.text.chars().take(cursor.start).collect();
                             let end: String = self.text.chars().skip(cursor.end).collect();
                             self.text.clear();
                             self.text.push_str(&start);
                             self.text.push_str(&end);
+                            cursor.end = cursor.start;
+                        },
+                        Left => if cursor.is_cursor() {
                             cursor.shift(-1);
-                        }
-                    } else {
-                        let start: String = self.text.chars().take(cursor.start).collect();
-                        let end: String = self.text.chars().skip(cursor.end).collect();
-                        self.text.clear();
-                        self.text.push_str(&start);
-                        self.text.push_str(&end);
-                        cursor.end = cursor.start;
-                    },
-                    Left => if cursor.is_cursor() {
-                        cursor.shift(-1);
-                    },
-                    Right => if cursor.is_cursor() && self.text.chars().count() > cursor.end {
-                        cursor.shift(1);
-                    },
-                    Return => if self.text.chars().count() > 0 {
-                        let TextBox { ref mut maybe_react, ref mut text, .. } = self;
-                        if let Some(ref mut react) = *maybe_react {
-                            react(*text);
-                        }
-                    },
-                    LCtrl | RCtrl if !new_control_pressed => {
-                        new_control_pressed = true;
-                    },
-                    A if new_control_pressed => {
-                        if cursor.is_cursor() {
-                            cursor.start = 0;
-                            cursor.end = self.text.chars().count();
-                        }
-                    },
-                    E if new_control_pressed => {
-                        if cursor.is_cursor() {
-                            cursor.start = self.text.chars().count();
-                            cursor.end = self.text.chars().count();
-                        }
-                    },
-                    _ => (),
+                        },
+                        Right => if cursor.is_cursor() && self.text.chars().count() > cursor.end {
+                            cursor.shift(1);
+                        },
+                        Return => if self.text.chars().count() > 0 {
+                            let TextBox { ref mut maybe_react, ref mut text, .. } = self;
+                            if let Some(ref mut react) = *maybe_react {
+                                react(*text);
+                            }
+                        },
+                        LCtrl | RCtrl if !new_control_pressed => {
+                            new_control_pressed = true;
+                        },
+                        A if new_control_pressed => {
+                            if cursor.is_cursor() {
+                                cursor.start = 0;
+                                cursor.end = self.text.chars().count();
+                            }
+                        },
+                        E if new_control_pressed => {
+                            if cursor.is_cursor() {
+                                cursor.start = self.text.chars().count();
+                                cursor.end = self.text.chars().count();
+                            }
+                        },
+                        _ => (),
+                    }
                 }
+
+                for key in input.released_keys.iter() {
+                    match *key {
+                        LCtrl | RCtrl if new_control_pressed => {
+                            new_control_pressed = false;
+                        },
+                        _ => (),
+                    }
+                }
+
+                // In case the string text was mutated with the `react` function, we need to make sure
+                // the cursor is limited to the current number of chars.
+                cursor.limit_end_to(self.text.chars().count());
+
+                new_interaction = Interaction::Captured(View { cursor: cursor, .. captured });
             }
 
-            for key in input.released_keys.iter() {
-                match *key {
-                    LCtrl | RCtrl if new_control_pressed => {
-                        new_control_pressed = false;
-                    },
-                    _ => (),
-                }
-            }
-
-            // In case the string text was mutated with the `react` function, we need to make sure
-            // the cursor is limited to the current number of chars.
-            cursor.limit_end_to(self.text.chars().count());
-
-            new_interaction = Interaction::Captured(View { cursor: cursor, .. captured });
         }
 
         // Check the interactions to determine whether we need to capture or uncapture the keyboard.
@@ -646,4 +669,3 @@ impl<'a, F> Frameable for TextBox<'a, F> {
         self
     }
 }
-
